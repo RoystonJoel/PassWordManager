@@ -1,0 +1,55 @@
+# Define the services (containers) that make up your application.
+services:
+  mongodb:
+    image: mongo
+    container_name: mongodb
+    # *** IMPORTANT: Removed ports mapping for MongoDB ***
+    # MongoDB will now ONLY be accessible from other containers within the Docker network,
+    # not directly from your host machine.
+    #ports:
+    #  - "27017:27017"
+    #  - "27018:27018"
+    volumes:
+      - mongodb_data:/data/db # Using named volume for persistent data
+      - ./database/seed:/seed
+      - ./database/init:/docker-entrypoint-initdb.d
+    env_file:
+      - /opt/secrets.env
+    environment:
+      MONGO_INITDB_DATABASE: MyDatabase
+    restart: unless-stopped
+    expose:
+      - "27017"
+      - "27018"
+    networks:
+      projectNetwork:
+        ipv4_address: 172.2.2.3
+
+  # --- NEW SERVICE: MongoAPI---
+  MongoAPI:
+    build: ./MongoAPI
+    image: python:3.13-alpine
+    container_name: MongoAPI
+    ports:
+      - "5000:5000"
+    expose:
+      - "5000"
+    depends_on:
+      - mongodb
+    env_file:
+      - /opt/secrets.env
+    networks:
+      projectNetwork:
+        ipv4_address: 172.2.2.4
+
+# Define the named volume for MongoDB data persistence
+volumes:
+  mongodb_data:
+
+networks:
+  projectNetwork:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.2.2.0/28"

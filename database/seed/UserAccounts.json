@@ -1,0 +1,4 @@
+[
+  { "_id": 1, "username": "user1@example.com", "password": "user1_password" },
+  { "_id": 2, "username": "user2@example.com", "password": "user2_password" }
+]

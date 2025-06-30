@@ -1,0 +1,13 @@
+﻿# .dockerignore
+
+# Ignore build artifacts and local user settings
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/*.user
+**/*.suo
+
+# Ignore Docker related files
+Dockerfile
+.dockerignore

@@ -1,0 +1,15 @@
+mongosh --host 127.0.0.1 --port 27017 -u root -p password --authenticationDatabase admin
+show dbs
+use MyDatabase
+db.UserAccounts.find().pretty()
+
+cd C:\Users\ROY\RiderProjects\ConsoleApp1\ConsoleApp1\infrastructure>
+docker-compose down -v
+docker-compose up -d
+docker-compose up -d --build
+docker logs mongodb
+docker build -t my-mongo-api .
+docker run -p 5000:5000 my-mongo-api
+
+
+
