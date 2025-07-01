@@ -1,0 +1,18 @@
+[
+    {
+      "owner": "1353212",
+      "folder_name": "folder1",
+      "vault_items" : [
+        "webpage1",
+        "webpage2"
+        ]
+    },
+    {
+      "owner": "1353212",
+      "folder_name": "folder2",
+      "vault_items" : [
+        "webpage3",
+        "webpage4"
+        ]
+    }
+]

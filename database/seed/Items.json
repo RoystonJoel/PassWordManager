@@ -1,0 +1,29 @@
+[
+    {
+      "owner": "1353212",
+      "valut_id": "8238",
+      "name": "webpage1",
+      "username": "webpage1_username",
+      "password": "webpage1_password",
+      "website": "google.com",
+      "Secure_notes": "Some notes here"
+    },
+    {
+      "owner": "1353212",
+      "valut_id": "8228",
+      "name": "webpage2",
+      "username": "webpage2_username",
+      "password": "webpage2_password",
+      "website": "google.com",
+      "Secure_notes": "Some notes here"
+    },
+    {
+      "owner": "8856325",
+      "valut_id": "1238",
+      "name": "webpage3",
+      "username": "webpage3_username",
+      "password": "webpage3_password",
+      "website": "google3.com",
+      "Secure_notes": "Some notes here"
+    }
+  ]

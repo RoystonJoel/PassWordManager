@@ -10,15 +10,27 @@ until mongosh --host 127.0.0.1 --port 27017 -u "$MONGO_INITDB_ROOT_USERNAME" -p 
 done
 echo "MongoDB is up and running. Importing data..."
 
-# Use the MONGO_INITDB_DATABASE environment variable for the database name.
-# The --file path is now relative to the container's root or the working directory, which is '/'.
-# Since '/seed' is mounted, '/seed/UserAccounts.json' is the correct path.
-mongoimport --db "$MONGO_INITDB_DATABASE" \
-            --collection UserAccounts \
-            --file "/seed/UserAccounts.json" \
-            --jsonArray \
-            --username "$MONGO_INITDB_ROOT_USERNAME" \
-            --password "$MONGO_INITDB_ROOT_PASSWORD" \
-            --authenticationDatabase admin
+# Define common mongoimport options for reusability
+MONGO_IMPORT_COMMON_OPTS="--db \"$MONGO_INITDB_DATABASE\" --jsonArray --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin"
 
-echo "Data import complete!"
+# --- Import UserAccounts collection ---
+echo "Importing UserAccounts collection..."
+mongoimport $MONGO_IMPORT_COMMON_OPTS \
+            --collection UserAccounts \
+            --file "/seed/UserAccounts.json"
+
+# --- Import Folders collection ---
+# Assumes 'Folders.json' exists in the /seed directory
+echo "Importing Folders collection..."
+mongoimport $MONGO_IMPORT_COMMON_OPTS \
+            --collection Folders \
+            --file "/seed/Folders.json"
+
+# --- Import Items collection ---
+# Assumes 'Items.json' exists in the /seed directory
+echo "Importing Items collection..."
+mongoimport $MONGO_IMPORT_COMMON_OPTS \
+            --collection Items \
+            --file "/seed/Items.json"
+
+echo "All data imports complete!"
