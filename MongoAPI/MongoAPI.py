@@ -20,11 +20,6 @@ VALID_USERS = {
     "user1": "pass123"
 }
 
-
-@app.route('/')
-def home():
-    return jsonify({"message": "Welcome to the Mongo API! If connected, this would show data from MongoDB."})
-
 @app.route('/data')
 def get_data():
     # In a real application, you would fetch data from MongoDB here.
@@ -36,10 +31,6 @@ def get_data():
         ]
     }
     return jsonify(sample_data)
-
-@app.route('/datadb')
-def get_datadb():
-        return db.UserAccounts.find_one({'username': 'user1'})
 
 @app.route('/authenticate', methods=['POST'])
 def authenticate():
