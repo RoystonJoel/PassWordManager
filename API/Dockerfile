@@ -20,12 +20,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the Python application file into the container at /app
-# This should include MongoAPI.py and any other necessary Python files
+# This should include API.py and any other necessary Python files
 COPY MongoAPI.py .
 
 # Define the command to run your application.
-# This assumes your MongoAPI.py file starts a web server.
+# This assumes your API.py file starts a web server.
 # For Flask, it might be 'flask run --host=0.0.0.0 --port=5000' or using gunicorn.
-# For a simple Python script, it's just 'python MongoAPI.py'.
+# For a simple Python script, it's just 'python API.py'.
 # For demonstration, we'll use a simple Python command.
 CMD ["python", "MongoAPI.py"]

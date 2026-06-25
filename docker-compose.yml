@@ -25,11 +25,11 @@ services:
       projectNetwork:
         ipv4_address: 172.2.2.3
 
-  # --- NEW SERVICE: MongoAPI---
+  # --- NEW SERVICE: API---
   MongoAPI:
-    build: ./MongoAPI
+    build: API
     image: python:3.13-alpine
-    container_name: MongoAPI
+    container_name: API
     ports:
       - "5000:5000"
     expose:

@@ -1,1 +1,4 @@
 commands.txt
+database/multi_vault.db
+__pycache__
+.idea
