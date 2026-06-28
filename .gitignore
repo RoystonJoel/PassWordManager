@@ -1,4 +1,6 @@
+.gitignore
 commands.txt
 database/
 __pycache__
 .idea
+commands
