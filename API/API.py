@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel
+from contextlib import asynccontextmanager
+
 import sqlite3
 import os
 import hashlib
@@ -12,7 +13,7 @@ import pydantic_models as model
 DB_FILE = '../database/vault.db'
 AUTH_TOKEN_MESSAGE = b"VAULT_AUTH_SUCCESS"
 
-app = FastAPI(title="Multi-User Vault API")
+
 security = HTTPBasic()
 
 # --- Database Setup ---
@@ -22,9 +23,9 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-
-@app.on_event("startup")
-def setup_database():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Everything BEFORE yield runs on STARTUP
     with get_db() as conn:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -43,6 +44,13 @@ def setup_database():
                 password TEXT
             )
         ''')
+        conn.commit()
+    print("Application is starting up...")
+    yield
+    # Everything AFTER yield runs on SHUTDOWN
+    print("Application is shutting down...")
+
+app = FastAPI(title="Multi-User Vault API", lifespan=lifespan)
 
 
 # --- Security Functions ---
