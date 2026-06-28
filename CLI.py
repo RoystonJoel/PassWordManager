@@ -1,6 +1,8 @@
 import requests
 import getpass
 import sys
+import datetime # Import the datetime module
+import pyotp # Import pyotp for TOTP generation
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -85,13 +87,13 @@ def display_folders(auth_tuple: tuple):
 
         if response.status_code != 200:
             print("[-] Failed to fetch vault.")
-            return
+            return None # Return None to indicate failure
 
         items = response.json()
 
         if not items:
             print("\n[-] Your vault is empty.")
-            return
+            return None # Return None to indicate no items
 
         folders = {}
         for item in items:
@@ -101,14 +103,25 @@ def display_folders(auth_tuple: tuple):
             folders[folder].append(item)
 
         print("\n--- Your Vault Contents ---")
+        item_list = []
+        count = 1
         for folder, folder_items in folders.items():
             print(f"\n📁 {folder}:")
-            for idx, item in enumerate(folder_items, 1):
-                print(f"   {idx}. {item['title']} (Username: {item['username']})")
+            for item in folder_items:
+                created_at_dt = datetime.datetime.fromisoformat(item['created_at'])
+                updated_at_dt = datetime.datetime.fromisoformat(item['updated_at'])
+                totp_status = "Configured" if item.get('totp_secret') else "Not Configured"
+                print(f"   {count}. {item['title']} (Username: {item['username']}) [ID: {item['id']}]")
+                print(f"      TOTP: {totp_status}")
+                print(f"      Created: {created_at_dt.strftime('%Y-%m-%d %H:%M:%S')}, Last Updated: {updated_at_dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                item_list.append(item)
+                count += 1
         print("---------------------------")
+        return item_list # Return the list of items for editing
     except requests.exceptions.ConnectionError:
         print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
         print("    Please ensure the server is running.")
+        return None
 
 
 def add_item(auth_tuple: tuple):
@@ -117,6 +130,7 @@ def add_item(auth_tuple: tuple):
     folder = input("Folder (e.g., Personal, Work): ")
     username = input("Username/Email: ")
     password = input("Password: ")
+    totp_secret = input("TOTP Secret (leave blank if none): ").strip()
 
     payload = {
         "title": title,
@@ -124,6 +138,8 @@ def add_item(auth_tuple: tuple):
         "username": username,
         "password": password
     }
+    if totp_secret:
+        payload["totp_secret"] = totp_secret
 
     try:
         response = requests.post(f"{BASE_URL}/items", json=payload, auth=auth_tuple)
@@ -135,6 +151,97 @@ def add_item(auth_tuple: tuple):
     except requests.exceptions.ConnectionError:
         print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
         print("    Please ensure the server is running.")
+
+
+def edit_item(auth_tuple: tuple):
+    print("\n--- Edit Item ---")
+    items = display_folders(auth_tuple) # Display items and get the list
+
+    if not items:
+        return
+
+    item_id_to_edit = input("Enter the ID of the item you want to edit: ").strip()
+
+    # Find the item to ensure it exists and belongs to the user (implicitly handled by API)
+    # For a better UX, we could pre-fill current values, but for now, we'll just update.
+    found_item = next((item for item in items if item['id'] == item_id_to_edit), None)
+
+    if not found_item:
+        print("[-] Item not found with the given ID.")
+        return
+
+    print(f"\nEditing item: {found_item['title']} (ID: {found_item['id']})")
+    print("Enter new values, or leave blank to keep current value.")
+    print("For TOTP Secret, enter 'clear' to remove it, or leave blank to keep current.")
+
+    new_title = input(f"New Title (current: {found_item['title']}): ").strip()
+    new_folder = input(f"New Folder (current: {found_item['folder']}): ").strip()
+    new_username = input(f"New Username (current: {found_item['username']}): ").strip()
+    new_password = getpass.getpass("New Password (leave blank to keep current): ").strip()
+    current_totp_status = "Configured" if found_item.get('totp_secret') else "Not Configured"
+    new_totp_secret_input = input(f"New TOTP Secret (current: {current_totp_status}): ").strip()
+
+
+    payload = {}
+    if new_title:
+        payload["title"] = new_title
+    if new_folder:
+        payload["folder"] = new_folder
+    if new_username:
+        payload["username"] = new_username
+    if new_password:
+        payload["password"] = new_password
+    if new_totp_secret_input == 'clear':
+        payload["totp_secret"] = None # Explicitly set to None to clear it
+    elif new_totp_secret_input:
+        payload["totp_secret"] = new_totp_secret_input
+
+
+    if not payload:
+        print("[!] No changes to apply.")
+        return
+
+    try:
+        response = requests.patch(f"{BASE_URL}/items/{item_id_to_edit}", json=payload, auth=auth_tuple)
+
+        if response.status_code == 200:
+            print(f"\n[+] Item '{found_item['title']}' updated successfully!")
+        elif response.status_code == 404:
+            print("[-] Item not found or not owned by you.")
+        else:
+            print(f"\n[-] Failed to update item: {response.text}")
+    except requests.exceptions.ConnectionError:
+        print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
+        print("    Please ensure the server is running.")
+
+
+def generate_totp_code(auth_tuple: tuple):
+    print("\n--- Generate TOTP Code ---")
+    items = display_folders(auth_tuple)
+
+    if not items:
+        return
+
+    item_id_for_totp = input("Enter the ID of the item for which to generate TOTP: ").strip()
+
+    found_item = next((item for item in items if item['id'] == item_id_for_totp), None)
+
+    if not found_item:
+        print("[-] Item not found with the given ID.")
+        return
+
+    totp_secret = found_item.get('totp_secret')
+    if not totp_secret:
+        print(f"[-] Item '{found_item['title']}' does not have a TOTP secret configured.")
+        return
+
+    try:
+        totp = pyotp.TOTP(totp_secret)
+        print(f"\n[+] Current TOTP code for '{found_item['title']}': {totp.now()}")
+        print("    (Code is valid for 30 seconds)")
+    except Exception as e:
+        print(f"[-] Error generating TOTP code: {e}")
+        print("    Please ensure the TOTP secret is valid Base32 encoded.")
 
 
 def search_vault(auth_tuple: tuple):
@@ -160,6 +267,13 @@ def search_vault(auth_tuple: tuple):
                 print(f"Folder: {item['folder']}")
                 print(f"Username: {item['username']}")
                 print(f"Password: {item['password']}")
+                totp_status = "Configured" if item.get('totp_secret') else "Not Configured"
+                print(f"TOTP: {totp_status}")
+                # Format created_at and updated_at for user-friendly display
+                created_at_dt = datetime.datetime.fromisoformat(item['created_at'])
+                updated_at_dt = datetime.datetime.fromisoformat(item['updated_at'])
+                print(f"Created at: {created_at_dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"Last Updated: {updated_at_dt.strftime('%Y-%m-%d %H:%M:%S')}")
     except requests.exceptions.ConnectionError:
         print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
         print("    Please ensure the server is running.")
@@ -172,9 +286,11 @@ def vault_menu(auth_tuple: tuple):
         print("1. View Vault")
         print("2. Search Vault")
         print("3. Add New Item")
-        print("4. Log Out")
+        print("4. Edit Item")
+        print("5. Generate TOTP Code") # New option
+        print("6. Log Out") # Updated option number
 
-        choice = input("\nSelect an option (1-4): ")
+        choice = input("\nSelect an option (1-6): ")
 
         if choice == '1':
             display_folders(auth_tuple)
@@ -183,6 +299,10 @@ def vault_menu(auth_tuple: tuple):
         elif choice == '3':
             add_item(auth_tuple)
         elif choice == '4':
+            edit_item(auth_tuple)
+        elif choice == '5': # Handle new option
+            generate_totp_code(auth_tuple)
+        elif choice == '6': # Updated option number
             print("\nLogging out. Your credentials have been cleared from memory.")
             break
         else:
