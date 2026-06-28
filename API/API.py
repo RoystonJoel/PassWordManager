@@ -1,3 +1,4 @@
+import datetime
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from contextlib import asynccontextmanager
@@ -41,7 +42,10 @@ async def lifespan(app: FastAPI):
                 title TEXT,
                 folder TEXT,
                 username TEXT,
-                password TEXT
+                password TEXT,
+                totp_secret TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         conn.commit()
@@ -130,12 +134,14 @@ def add_item(item: model.ItemCreate, auth: dict = Depends(authenticate_user)):
 
     enc_username = cipher.encrypt(item.username.encode()).decode()
     enc_password = cipher.encrypt(item.password.encode()).decode()
+    enc_totp_secret = cipher.encrypt(item.totp_secret.encode()).decode() if item.totp_secret else None
     item_id = str(uuid.uuid4())
+    current_time = datetime.datetime.now().isoformat()
 
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO items (id, owner, title, folder, username, password) VALUES (?, ?, ?, ?, ?, ?)",
-            (item_id, username, item.title, item.folder, enc_username, enc_password)
+            "INSERT INTO items (id, owner, title, folder, username, password, totp_secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (item_id, username, item.title, item.folder, enc_username, enc_password, enc_totp_secret, current_time, current_time)
         )
         conn.commit()
 
@@ -144,11 +150,87 @@ def add_item(item: model.ItemCreate, auth: dict = Depends(authenticate_user)):
         "title": item.title,
         "folder": item.folder,
         "username": item.username,
-        "password": item.password
+        "password": item.password,
+        "totp_secret": item.totp_secret,
+        "created_at": datetime.datetime.fromisoformat(current_time),
+        "updated_at": datetime.datetime.fromisoformat(current_time)
     }
 
 
-@app.get("/items", response_model=list[ItemResponse])
+@app.patch("/items/{item_id}", response_model=model.ItemResponse)
+def update_item(item_id: str, item_update: model.ItemUpdate, auth: dict = Depends(authenticate_user)):
+    username = auth["username"]
+    cipher = auth["cipher"]
+
+    with get_db() as conn:
+        existing_item = conn.execute(
+            "SELECT * FROM items WHERE id = ? AND owner = ?",
+            (item_id, username)
+        ).fetchone()
+
+        if not existing_item:
+            raise HTTPException(status_code=404, detail="Item not found or not owned by user")
+
+        update_fields = {}
+        if item_update.title is not None:
+            update_fields["title"] = item_update.title
+        if item_update.folder is not None:
+            update_fields["folder"] = item_update.folder
+        if item_update.username is not None:
+            update_fields["username"] = cipher.encrypt(item_update.username.encode()).decode()
+        if item_update.password is not None:
+            update_fields["password"] = cipher.encrypt(item_update.password.encode()).decode()
+        if item_update.totp_secret is not None:
+            update_fields["totp_secret"] = cipher.encrypt(item_update.totp_secret.encode()).decode()
+        elif "totp_secret" in item_update.dict(exclude_unset=True) and item_update.totp_secret is None:
+            # Allow setting totp_secret to None to clear it
+            update_fields["totp_secret"] = None
+
+
+        if not update_fields:
+            return {
+                "id": existing_item["id"],
+                "title": existing_item["title"],
+                "folder": existing_item["folder"],
+                "username": cipher.decrypt(existing_item["username"].encode()).decode(),
+                "password": cipher.decrypt(existing_item["password"].encode()).decode(),
+                "totp_secret": cipher.decrypt(existing_item["totp_secret"].encode()).decode() if existing_item["totp_secret"] else None,
+                "created_at": datetime.datetime.fromisoformat(existing_item["created_at"]),
+                "updated_at": datetime.datetime.fromisoformat(existing_item["updated_at"])
+            }
+
+        update_fields["updated_at"] = datetime.datetime.now().isoformat()
+
+        set_clauses = [f"{k} = ?" for k in update_fields.keys()]
+        values = list(update_fields.values())
+        values.append(item_id)
+        values.append(username)
+
+        conn.execute(
+            f"UPDATE items SET {', '.join(set_clauses)} WHERE id = ? AND owner = ?",
+            values
+        )
+        conn.commit()
+
+        # Fetch the updated item to return
+        updated_item_row = conn.execute(
+            "SELECT * FROM items WHERE id = ? AND owner = ?",
+            (item_id, username)
+        ).fetchone()
+
+        return {
+            "id": updated_item_row["id"],
+            "title": updated_item_row["title"],
+            "folder": updated_item_row["folder"],
+            "username": cipher.decrypt(updated_item_row["username"].encode()).decode(),
+            "password": cipher.decrypt(updated_item_row["password"].encode()).decode(),
+            "totp_secret": cipher.decrypt(updated_item_row["totp_secret"].encode()).decode() if updated_item_row["totp_secret"] else None,
+            "created_at": datetime.datetime.fromisoformat(updated_item_row["created_at"]),
+            "updated_at": datetime.datetime.fromisoformat(updated_item_row["updated_at"])
+        }
+
+
+@app.get("/items", response_model=list[model.ItemResponse])
 def get_vault(auth: dict = Depends(authenticate_user)):
     username = auth["username"]
     cipher = auth["cipher"]
@@ -166,7 +248,10 @@ def get_vault(auth: dict = Depends(authenticate_user)):
             "title": item["title"],
             "folder": item["folder"],
             "username": cipher.decrypt(item["username"].encode()).decode(),
-            "password": cipher.decrypt(item["password"].encode()).decode()
+            "password": cipher.decrypt(item["password"].encode()).decode(),
+            "totp_secret": cipher.decrypt(item["totp_secret"].encode()).decode() if item["totp_secret"] else None,
+            "created_at": datetime.datetime.fromisoformat(item["created_at"]),
+            "updated_at": datetime.datetime.fromisoformat(item["updated_at"])
         })
 
     return results
@@ -190,7 +275,10 @@ def search_vault(query: str, auth: dict = Depends(authenticate_user)):
             "title": item["title"],
             "folder": item["folder"],
             "username": cipher.decrypt(item["username"].encode()).decode(),
-            "password": cipher.decrypt(item["password"].encode()).decode()
+            "password": cipher.decrypt(item["password"].encode()).decode(),
+            "totp_secret": cipher.decrypt(item["totp_secret"].encode()).decode() if item["totp_secret"] else None,
+            "created_at": datetime.datetime.fromisoformat(item["created_at"]),
+            "updated_at": datetime.datetime.fromisoformat(item["updated_at"])
         })
 
     return results
