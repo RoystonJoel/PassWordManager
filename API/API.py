@@ -7,35 +7,13 @@ import hashlib
 import base64
 import uuid
 from cryptography.fernet import Fernet, InvalidToken
+import pydantic_models as model
 
 DB_FILE = '../database/vault.db'
 AUTH_TOKEN_MESSAGE = b"VAULT_AUTH_SUCCESS"
 
 app = FastAPI(title="Multi-User Vault API")
 security = HTTPBasic()
-
-
-# --- Pydantic Models (For API input/output validation) ---
-
-class UserCreate(BaseModel):
-    username: str
-    master_password: str
-
-
-class ItemCreate(BaseModel):
-    title: str
-    folder: str = "Uncategorized"
-    username: str
-    password: str
-
-
-class ItemResponse(BaseModel):
-    id: str
-    title: str
-    folder: str
-    username: str
-    password: str
-
 
 # --- Database Setup ---
 
@@ -114,7 +92,7 @@ def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
 # --- API Endpoints ---
 
 @app.post("/register", status_code=201)
-def register_user(user: UserCreate):
+def register_user(user: model.UserCreate):
     username = user.username.strip().lower()
 
     with get_db() as conn:
@@ -137,8 +115,8 @@ def register_user(user: UserCreate):
     return {"message": f"User '{username}' created successfully."}
 
 
-@app.post("/items", response_model=ItemResponse)
-def add_item(item: ItemCreate, auth: dict = Depends(authenticate_user)):
+@app.post("/items", response_model=model.ItemResponse)
+def add_item(item: model.ItemCreate, auth: dict = Depends(authenticate_user)):
     username = auth["username"]
     cipher = auth["cipher"]
 
@@ -186,7 +164,7 @@ def get_vault(auth: dict = Depends(authenticate_user)):
     return results
 
 
-@app.get("/search", response_model=list[ItemResponse])
+@app.get("/search", response_model=list[model.ItemResponse])
 def search_vault(query: str, auth: dict = Depends(authenticate_user)):
     username = auth["username"]
     cipher = auth["cipher"]
