@@ -7,7 +7,3 @@
 **/.vscode/
 **/*.user
 **/*.suo
-
-# Ignore Docker related files
-Dockerfile
-.dockerignore
