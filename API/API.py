@@ -11,7 +11,7 @@ import uuid
 from cryptography.fernet import Fernet, InvalidToken
 import pydantic_models as model
 
-DB_FILE = '../database/vault.db'
+DB_FILE = 'database/vault.db'
 AUTH_TOKEN_MESSAGE = b"VAULT_AUTH_SUCCESS"
 
 
