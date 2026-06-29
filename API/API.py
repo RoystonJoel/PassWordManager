@@ -282,3 +282,162 @@ def search_vault(query: str, auth: dict = Depends(authenticate_user)):
         })
 
     return results
+
+
+@app.delete("/items/{item_id}", status_code=204)
+def delete_item(item_id: str, auth: dict = Depends(authenticate_user)):
+    username = auth["username"]
+
+    with get_db() as conn:
+        # First, retrieve the item to be "deleted"
+        item_to_delete = conn.execute(
+            "SELECT id, owner, title, folder, username, password, totp_secret, created_at, updated_at FROM items WHERE id = ? AND owner = ?",
+            (item_id, username)
+        ).fetchone()
+
+        if not item_to_delete:
+            raise HTTPException(status_code=404, detail="Item not found or not owned by user")
+
+        # Insert the item into the trash table
+        conn.execute(
+            """
+            INSERT INTO trash (id, owner, title, folder, username, password, totp_secret, created_at, updated_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_to_delete["id"],
+                item_to_delete["owner"],
+                item_to_delete["title"],
+                item_to_delete["folder"],
+                item_to_delete["username"],
+                item_to_delete["password"],
+                item_to_delete["totp_secret"],
+                item_to_delete["created_at"],
+                item_to_delete["updated_at"],
+                datetime.datetime.now().isoformat() # Add the deleted_at timestamp
+            )
+        )
+
+        # Now, delete the item from the active items table
+        conn.execute(
+            "DELETE FROM items WHERE id = ? AND owner = ?",
+            (item_id, username)
+        )
+        conn.commit()
+
+    return {"message": "Item moved to trash successfully"}
+
+
+@app.post("/cleanup_trash", status_code=200)
+def cleanup_trash():
+    """
+    Permanently deletes items from the trash table that are older than 30 days.
+    This endpoint should ideally be called by a scheduled job, not directly by users.
+    """
+    with get_db() as conn:
+        # Calculate the date 30 days ago
+        thirty_days_ago = (datetime.datetime.now() - datetime.timedelta(days=30)).isoformat()
+
+        cursor = conn.execute(
+            "DELETE FROM trash WHERE deleted_at < ?",
+            (thirty_days_ago,)
+        )
+        conn.commit()
+
+    return {"message": f"Cleaned up {cursor.rowcount} items from trash older than 30 days."}
+
+@app.post("/trash/restore/{item_id}", status_code=200)
+def restore_item_from_trash(item_id: str, auth: dict = Depends(authenticate_user)):
+    username = auth["username"]
+
+    with get_db() as conn:
+        # Retrieve the item from the trash table
+        item_to_restore = conn.execute(
+            "SELECT id, owner, title, folder, username, password, totp_secret, created_at, updated_at FROM trash WHERE id = ? AND owner = ?",
+            (item_id, username)
+        ).fetchone()
+
+        if not item_to_restore:
+            raise HTTPException(status_code=404, detail="Item not found in trash or not owned by user")
+
+        # Check if an item with the same ID already exists in the active items table
+        # This is to prevent primary key conflicts if an item with the same ID was recreated
+        existing_active_item = conn.execute(
+            "SELECT id FROM items WHERE id = ?", (item_to_restore["id"],)
+        ).fetchone()
+
+        if existing_active_item:
+            raise HTTPException(status_code=409, detail=f"An active item with ID '{item_to_restore['id']}' already exists. Cannot restore.")
+
+        # Insert the item back into the active items table
+        conn.execute(
+            """
+            INSERT INTO items (id, owner, title, folder, username, password, totp_secret, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_to_restore["id"],
+                item_to_restore["owner"],
+                item_to_restore["title"],
+                item_to_restore["folder"],
+                item_to_restore["username"],
+                item_to_restore["password"],
+                item_to_restore["totp_secret"],
+                item_to_restore["created_at"],
+                datetime.datetime.now().isoformat(), # Update updated_at to current time
+            )
+        )
+
+        # Delete the item from the trash table
+        conn.execute(
+            "DELETE FROM trash WHERE id = ? AND owner = ?",
+            (item_id, username)
+        )
+        conn.commit()
+
+    return {"message": f"Item '{item_id}' restored successfully from trash."}
+
+
+@app.get("/trash/items", response_model=list[model.ItemResponse])
+def get_trash_items(auth: dict = Depends(authenticate_user)):
+    username = auth["username"]
+    cipher = auth["cipher"]
+
+    with get_db() as conn:
+        items = conn.execute(
+            "SELECT id, owner, title, folder, username, password, totp_secret, created_at, updated_at, deleted_at FROM trash WHERE owner = ? ORDER BY deleted_at DESC",
+            (username,)
+        ).fetchall()
+
+    results = []
+    for item in items:
+        results.append({
+            "id": item["id"],
+            "title": item["title"],
+            "folder": item["folder"],
+            "username": cipher.decrypt(item["username"].encode()).decode(),
+            "password": cipher.decrypt(item["password"].encode()).decode(),
+            "totp_secret": cipher.decrypt(item["totp_secret"].encode()).decode() if item["totp_secret"] else None,
+            "created_at": datetime.datetime.fromisoformat(item["created_at"]),
+            "updated_at": datetime.datetime.fromisoformat(item["updated_at"]),
+            "deleted_at": datetime.datetime.fromisoformat(item["deleted_at"]) # Include deleted_at for trash items
+        })
+
+    return results
+
+
+@app.delete("/trash/permanent_delete/{item_id}", status_code=204)
+def permanent_delete_item_from_trash(item_id: str, auth: dict = Depends(authenticate_user)):
+    username = auth["username"]
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            "DELETE FROM trash WHERE id = ? AND owner = ?",
+            (item_id, username)
+        )
+        conn.commit()
+
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Item not found in trash or not owned by user")
+
+    return {"message": "Item permanently deleted from trash successfully"}
