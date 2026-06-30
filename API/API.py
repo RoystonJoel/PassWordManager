@@ -142,7 +142,7 @@ def get_user_salt(username: str, auth: dict = Depends(authenticate_user)):
         return {"username": username, "salt": user_row["salt"]}
 
 
-@app.post("/items", response_model=model.ItemResponse)
+@app.post("/items", response_model=model.ItemResponse, status_code=201)
 def add_item(item: model.ItemCreate, auth: dict = Depends(authenticate_user)):
     username = auth["username"]
     enc_data = item.item_data

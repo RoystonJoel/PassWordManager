@@ -237,7 +237,7 @@ def add_item(auth_tuple: tuple):
     try:
         response = requests.post(f"{BASE_URL}/items", json=payload, auth=auth_header)
 
-        if response.status_code == 200:
+        if response.status_code == 201:
             print(f"\n[+] '{title}' added to your vault.")
         else:
             print(f"\n[-] Failed to add item: {response.text}")
