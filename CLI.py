@@ -141,29 +141,32 @@ def display_folders(auth_tuple: tuple):
         count = 1
         for item in items:
             try:
-                # Decrypt item_data
+                # Decrypt item_data first (Metadata is hidden inside the ciphertext string)
                 decrypted_data_str = cipher.decrypt(item["item_data"].encode()).decode()
                 item_data_dict = json.loads(decrypted_data_str)
                 item["item_data"] = item_data_dict # Replace encrypted string with decrypted dict
 
-                folder = item["folder"]
+                # Extract title and folder from the decrypted internal fields
+                title = item_data_dict.get("title", "Untitled")
+                folder = item_data_dict.get("folder", "uncategorised")
+
                 if folder not in folders:
                     folders[folder] = []
-                folders[folder].append(item)
+                folders[folder].append((item, title))
 
                 item_list.append(item) # Add decrypted item to list
             except InvalidToken:
-                print(f"[-] Warning: Could not decrypt item '{item['title']}' (ID: {item['id']}). Possible master password mismatch or corrupted data.")
+                print(f"[-] Warning: Could not decrypt item ID: {item['id']}. Possible master password mismatch or corrupted data.")
                 continue # Skip this item if decryption fails
 
         print("\n--- Your Vault Contents ---")
         for folder, folder_items in folders.items():
             print(f"\n📁 {folder}:")
-            for item in folder_items:
+            for item, title in folder_items:
                 item_data = item.get("item_data", {})
                 item_type = item.get("item_type", "unknown")
 
-                print(f"   {count}. {item['title']} [{item_type.upper()}] [ID: {item['id']}]")
+                print(f"   {count}. {title} [{item_type.upper()}] [ID: {item['id']}]")
 
                 # Dynamically display summary info based on type
                 if item_type == "login":
@@ -198,6 +201,8 @@ def add_item(auth_tuple: tuple):
 
     item_type = "unknown"
     item_data_dict = {} # This will be the dictionary to encrypt
+    item_data_dict["title"] = title
+    item_data_dict["folder"] = folder if folder else "uncategorised"
 
     if type_choice == '1':
         item_type = "login"
@@ -225,8 +230,6 @@ def add_item(auth_tuple: tuple):
     encrypted_item_data = cipher.encrypt(json.dumps(item_data_dict).encode()).decode()
 
     payload = {
-        "title": title,
-        "folder": folder if folder else "uncategorised",
         "item_type": item_type,
         "item_data": encrypted_item_data # Send encrypted string
     }
@@ -247,7 +250,7 @@ def edit_item(auth_tuple: tuple):
     auth_header = (username, password)
 
     print("\n--- Edit Item ---")
-    items = display_folders(auth_tuple) # This returns decrypted items
+    items = display_folders(auth_tuple)  # This returns items with decrypted item_data dicts
 
     if not items:
         return
@@ -259,26 +262,34 @@ def edit_item(auth_tuple: tuple):
         print("[-] Item not found.")
         return
 
-    payload = {}
-    item_data_updates = {}
+    # Extract current decrypted item data structure
+    updated_item_data_dict = item.get('item_data', {})
 
-    print(f"\nEditing: {item['title']} [{item.get('item_type', 'unknown').upper()}]")
+    # Safely look up metadata from within the decrypted dictionary
+    current_title = updated_item_data_dict.get('title', 'Untitled')
+    current_folder = updated_item_data_dict.get('folder', 'uncategorised')
+
+    print(f"\nEditing: {current_title} [{item.get('item_type', 'unknown').upper()}]")
     print("Tip: Leave a field blank and press Enter to keep the current value.")
 
-    # 1. Edit the standard information
-    new_title = input(f"New Title ({item['title']}): ").strip()
+    item_data_updates = {}
+
+    # 1. Edit the core metadata (saved inside the encrypted payload)
+    new_title = input(f"New Title ({current_title}): ").strip()
     if new_title:
-        payload['title'] = new_title
+        item_data_updates['title'] = new_title
 
-    new_folder = input(f"New Folder ({item['folder']}): ").strip()
+    new_folder = input(f"New Folder ({current_folder}): ").strip()
     if new_folder:
-        payload['folder'] = new_folder
+        item_data_updates['folder'] = new_folder
 
-    # 2. Edit the specific item details dynamically (using already decrypted data)
+    # 2. Edit the specific item details dynamically
     print("\n--- Editing Specific Details ---")
-    current_data = item.get('item_data', {}) # This is already a dict from display_folders
+    for key, current_value in updated_item_data_dict.items():
+        # Skip metadata attributes to avoid duplicate prompt inputs
+        if key in ["title", "folder"]:
+            continue
 
-    for key, current_value in current_data.items():
         if key in ["password", "cvv", "totp_secret", "private_key"]:
             display_value = "********"
         else:
@@ -297,6 +308,10 @@ def edit_item(auth_tuple: tuple):
 
         new_key = input("Enter new field name (e.g., 'website', 'pin_code'): ").strip().lower().replace(" ", "_")
         if new_key:
+            if new_key in ["title", "folder"]:
+                print("[-] Reserved keyword field name. Choose a different label.")
+                continue
+
             is_secret = input("Is this a hidden secret? (y/n): ").strip().lower()
             if is_secret == 'y':
                 new_val = getpass.getpass(f"Enter secret value for '{new_key}': ").strip()
@@ -306,16 +321,18 @@ def edit_item(auth_tuple: tuple):
             if new_val:
                 item_data_updates[new_key] = new_val
 
-    # Merge updates into the original decrypted item_data
-    updated_item_data_dict = item.get('item_data', {})
-    updated_item_data_dict.update(item_data_updates)
-
-    if not payload and not item_data_updates:
+    if not item_data_updates:
         print("\n[-] No changes were made.")
         return
 
-    # Encrypt the entire updated item_data_dict before sending
-    payload['item_data'] = cipher.encrypt(json.dumps(updated_item_data_dict).encode()).decode()
+    # Merge updates into our localized target mapping dictionary
+    updated_item_data_dict.update(item_data_updates)
+
+    # Encrypt the entire updated item_data dictionary payload (Strategy 1)
+    # The API schema only accepts item_type and item_data at the top-level
+    payload = {
+        'item_data': cipher.encrypt(json.dumps(updated_item_data_dict).encode()).decode()
+    }
 
     try:
         response = requests.patch(f"{BASE_URL}/items/{item_id}", json=payload, auth=auth_header)
@@ -333,7 +350,7 @@ def delete_item_cli(auth_tuple: tuple):
     auth_header = (username, password)
 
     print("\n--- Delete Item ---")
-    items = display_folders(auth_tuple) # This returns decrypted items
+    items = display_folders(auth_tuple) # This returns items with already decrypted item_data dicts
 
     if not items:
         return
@@ -345,7 +362,10 @@ def delete_item_cli(auth_tuple: tuple):
         print("[-] Item not found.")
         return
 
-    confirm = input(f"Are you sure you want to delete '{item['title']}'? (y/n): ").strip().lower()
+    # Extract title from the decrypted inner item_data dictionary
+    title = item.get('item_data', {}).get('title', 'Untitled')
+
+    confirm = input(f"Are you sure you want to delete '{title}'? (y/n): ").strip().lower()
     if confirm != 'y':
         print("[-] Deletion cancelled.")
         return
@@ -354,7 +374,7 @@ def delete_item_cli(auth_tuple: tuple):
         response = requests.delete(f"{BASE_URL}/items/{item_id}", auth=auth_header)
 
         if response.status_code == 204:
-            print(f"\n[+] Item '{item['title']}' moved to trash successfully.")
+            print(f"\n[+] Item '{title}' moved to trash successfully.")
         elif response.status_code == 404:
             print("[-] Item not found or not owned by user.")
         else:
@@ -385,15 +405,19 @@ def view_trash_cli(auth_tuple: tuple):
         decrypted_trash_items = []
         for item in trash_items:
             try:
-                # Decrypt item_data
+                # Decrypt item_data payload completely
                 decrypted_data_str = cipher.decrypt(item["item_data"].encode()).decode()
                 item_data_dict = json.loads(decrypted_data_str)
-                item["item_data"] = item_data_dict # Replace encrypted string with decrypted dict
+                item["item_data"] = item_data_dict  # Replace encrypted string with decrypted dict
+
+                # Fetch title from inside the decrypted block
+                title = item_data_dict.get('title', 'Untitled')
                 decrypted_trash_items.append(item)
-                print(f"Title: {item['title']} [ID: {item['id']}] (Deleted: {item['deleted_at']})")
+
+                print(f"Title: {title} [ID: {item['id']}] (Deleted: {item['deleted_at']})")
             except InvalidToken:
-                print(f"[-] Warning: Could not decrypt trash item '{item['title']}' (ID: {item['id']}). Possible master password mismatch or corrupted data.")
-                continue # Skip this item if decryption fails
+                print(f"[-] Warning: Could not decrypt trash item ID: {item['id']}. Skipping corrupted item.")
+                continue
         print("----------------------")
 
         while True:
@@ -405,39 +429,39 @@ def view_trash_cli(auth_tuple: tuple):
 
             if trash_choice == '1':
                 item_id = input("Enter the ID of the item to restore: ").strip()
-                # Find the item in the decrypted list to get its full data
                 item_to_restore = next((i for i in decrypted_trash_items if i['id'] == item_id), None)
 
                 if not item_to_restore:
                     print("[-] Item not found in trash.")
                     continue
 
-                # The API expects the encrypted_data back for restoration
-                # We need to re-encrypt the decrypted item_data before sending it back
-                encrypted_item_data_for_restore = cipher.encrypt(json.dumps(item_to_restore["item_data"]).encode()).decode()
+                # Safely capture metadata from inside the decrypted dict
+                restore_data_dict = item_to_restore["item_data"]
+                title = restore_data_dict.get('title', 'Untitled')
 
+                # Re-encrypt the full dictionary containing everything back into item_data (Strategy 1)
+                encrypted_item_data_for_restore = cipher.encrypt(json.dumps(restore_data_dict).encode()).decode()
+
+                # Cleaned payload matching your modified non-metadata leaking API endpoints
                 restore_payload = {
                     "id": item_to_restore["id"],
-                    "title": item_to_restore["title"],
-                    "folder": item_to_restore["folder"],
                     "item_type": item_to_restore["item_type"],
                     "item_data": encrypted_item_data_for_restore,
                     "created_at": item_to_restore["created_at"],
                     "updated_at": item_to_restore["updated_at"]
                 }
 
-
                 try:
-                    restore_response = requests.post(f"{BASE_URL}/trash/restore/{item_id}", json=restore_payload, auth=auth_header)
+                    restore_response = requests.post(f"{BASE_URL}/trash/restore/{item_id}", json=restore_payload,
+                                                     auth=auth_header)
                     if restore_response.status_code == 200:
-                        print(f"[+] Item '{item_to_restore['title']}' restored successfully.")
-                        # Refresh trash view
-                        view_trash_cli(auth_tuple)
+                        print(f"[+] Item '{title}' restored successfully.")
                         return
                     elif restore_response.status_code == 404:
                         print("[-] Item not found in trash or not owned by user.")
                     elif restore_response.status_code == 409:
-                        print(f"[-] Cannot restore: {restore_response.json().get('detail', 'An active item with this ID already exists.')}")
+                        print(
+                            f"[-] Cannot restore: {restore_response.json().get('detail', 'An active item with this ID already exists.')}")
                     else:
                         print(f"[-] Failed to restore item: {restore_response.text}")
                 except requests.exceptions.ConnectionError:
@@ -450,14 +474,16 @@ def view_trash_cli(auth_tuple: tuple):
                     print("[-] Item not found in trash.")
                     continue
 
-                confirm = input(f"WARNING: This will permanently delete item '{item_to_delete['title']}'. Are you sure? (y/n): ").strip().lower()
+                title = item_to_delete["item_data"].get('title', 'Untitled')
+
+                confirm = input(
+                    f"WARNING: This will permanently delete item '{title}'. Are you sure? (y/n): ").strip().lower()
                 if confirm == 'y':
                     try:
-                        delete_response = requests.delete(f"{BASE_URL}/trash/permanent_delete/{item_id}", auth=auth_header)
+                        delete_response = requests.delete(f"{BASE_URL}/trash/permanent_delete/{item_id}",
+                                                          auth=auth_header)
                         if delete_response.status_code == 204:
-                            print(f"[+] Item '{item_to_delete['title']}' permanently deleted.")
-                            # Refresh trash view
-                            view_trash_cli(auth_tuple)
+                            print(f"[+] Item '{title}' permanently deleted.")
                             return
                         elif delete_response.status_code == 404:
                             print("[-] Item not found in trash or not owned by user.")
@@ -522,7 +548,7 @@ def search_vault(auth_tuple: tuple):
         return
 
     try:
-        # Fetch the entire vault securely (All items are encrypted on the server)
+        # Fetch all items securely from the vault endpoint
         response = requests.get(f"{BASE_URL}/items", auth=auth_header)
 
         if response.status_code != 200:
@@ -537,40 +563,48 @@ def search_vault(auth_tuple: tuple):
 
         matches = []
 
-        # Decrypt and filter locally in memory (Zero-Knowledge)
+        # Local, in-memory decryption and case-insensitive matching
         for item in all_items:
             try:
-                # Decrypt the item data payload
+                # Decrypt the item data payload locally
                 decrypted_data_str = cipher.decrypt(item["item_data"].encode()).decode()
                 item_data_dict = json.loads(decrypted_data_str)
-                item["item_data"] = item_data_dict  # Replace ciphertext with decrypted dict
+                item["item_data"] = item_data_dict  # Replace ciphertext string with decrypted dict
 
-                # Check if the query matches the title (case-insensitive)
-                if query in item["title"].lower():
-                    matches.append(item)
+                # Fetch title from decrypted object
+                title = item_data_dict.get("title", "Untitled")
+
+                # Check if search term matches the decrypted title
+                if query in title.lower():
+                    matches.append((item, title))
 
             except InvalidToken:
-                print(f"[-] Warning: Could not decrypt item '{item['title']}' (ID: {item['id']}). Skipping.")
+                print(f"[-] Warning: Could not decrypt item ID: {item['id']}. Skipping.")
                 continue
 
         if not matches:
             print(f"\n[-] No matches found for '{query}'.")
         else:
             print(f"\n[+] Found {len(matches)} match(es):")
-            for item in matches:
+            for item, title in matches:
                 item_type = item.get('item_type', 'unknown')
                 item_data = item.get('item_data', {})
+                folder = item_data.get('folder', 'uncategorised')
 
                 print(f"\n========================================")
-                print(f"Title: {item['title']} [{item_type.upper()}]")
-                print(f"Folder: {item['folder']}")
+                print(f"Title: {title} [{item_type.upper()}]")
+                print(f"Folder: {folder}")
                 print(f"ID: {item['id']}")
                 print(f"----------------------------------------")
 
-                # Print out all nested fields dynamically
+                # Print out internal nested fields dynamically
                 for key, value in item_data.items():
-                    # Hide sensitive information in search previews if needed
-                    if key in ["password", "cvv", "totp_secret"] and len(value) > 0:
+                    # Skip rendering metadata parameters as redundant custom fields
+                    if key in ["title", "folder"]:
+                        continue
+
+                    # Obfuscate credentials preview securely in CLI output
+                    if key in ["password", "cvv", "totp_secret"] and len(str(value)) > 0:
                         print(f"{key.capitalize()}: ********")
                     else:
                         print(f"{key.capitalize()}: {value}")

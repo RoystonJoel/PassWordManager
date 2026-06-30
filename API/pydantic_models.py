@@ -38,21 +38,15 @@ class UserCreate(BaseModel):
     auth_token: str # Client will encrypt AUTH_TOKEN_MESSAGE and send this
 
 class ItemCreate(BaseModel):
-    title: str
-    folder: str = "uncategorised"
     item_type: str = Field(..., description="E.g., 'login', 'card', 'note', 'identity', 'ssh_key'")
     item_data: str  # This will now be the encrypted JSON string
 
 class ItemUpdate(BaseModel):
-    title: Optional[str] = None
-    folder: Optional[str] = None
     item_type: Optional[str] = None
     item_data: Optional[str] = None # This will now be the encrypted JSON string
 
 class ItemResponse(BaseModel):
     id: str
-    title: str
-    folder: str
     item_type: str
     item_data: str # This will now be the encrypted JSON string
     created_at: datetime.datetime

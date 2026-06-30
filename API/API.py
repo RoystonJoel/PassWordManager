@@ -36,8 +36,6 @@ async def lifespan(app: FastAPI):
             CREATE TABLE IF NOT EXISTS items (
                 id TEXT PRIMARY KEY,
                 owner TEXT,
-                title TEXT,
-                folder TEXT,
                 item_type TEXT,
                 encrypted_data TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -48,8 +46,6 @@ async def lifespan(app: FastAPI):
             CREATE TABLE IF NOT EXISTS trash (
                 id TEXT PRIMARY KEY,
                 owner TEXT,
-                title TEXT,
-                folder TEXT,
                 item_type TEXT,
                 encrypted_data TEXT,
                 created_at TEXT,
@@ -149,25 +145,21 @@ def get_user_salt(username: str, auth: dict = Depends(authenticate_user)):
 @app.post("/items", response_model=model.ItemResponse)
 def add_item(item: model.ItemCreate, auth: dict = Depends(authenticate_user)):
     username = auth["username"]
-    # item.item_data is now expected to be the already encrypted string from the client
     enc_data = item.item_data
-
     item_id = str(uuid.uuid4())
     current_time = datetime.datetime.now().isoformat()
 
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO items (id, owner, title, folder, item_type, encrypted_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (item_id, username, item.title, item.folder, item.item_type, enc_data, current_time, current_time)
+            "INSERT INTO items (id, owner, item_type, encrypted_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (item_id, username, item.item_type, enc_data, current_time, current_time)
         )
         conn.commit()
 
     return {
         "id": item_id,
-        "title": item.title,
-        "folder": item.folder,
         "item_type": item.item_type,
-        "item_data": item.item_data, # Return the encrypted data as is (ciphertext)
+        "item_data": item.item_data,
         "created_at": datetime.datetime.fromisoformat(current_time),
         "updated_at": datetime.datetime.fromisoformat(current_time)
     }
@@ -187,26 +179,16 @@ def update_item(item_id: str, item_update: model.ItemUpdate, auth: dict = Depend
             raise HTTPException(status_code=404, detail="Item not found or not owned by user")
 
         update_fields = {}
-        if item_update.title is not None:
-            update_fields["title"] = item_update.title
-        if item_update.folder is not None:
-            update_fields["folder"] = item_update.folder
         if item_update.item_type is not None:
             update_fields["item_type"] = item_update.item_type
-
-        # Handle the encrypted data payload - server no longer decrypts/re-encrypts
-        # Client is responsible for sending the full encrypted item_data if it changes
         if item_update.item_data is not None:
-            update_fields["encrypted_data"] = item_update.item_data # Expecting already encrypted data
+            update_fields["encrypted_data"] = item_update.item_data
 
         if not update_fields:
-            # If nothing was changed, just return the existing item
             return {
                 "id": existing_item["id"],
-                "title": existing_item["title"],
-                "folder": existing_item["folder"],
                 "item_type": existing_item["item_type"],
-                "item_data": existing_item["encrypted_data"], # Return the encrypted data as is (ciphertext)
+                "item_data": existing_item["encrypted_data"],
                 "created_at": datetime.datetime.fromisoformat(existing_item["created_at"]),
                 "updated_at": datetime.datetime.fromisoformat(existing_item["updated_at"])
             }
@@ -223,7 +205,6 @@ def update_item(item_id: str, item_update: model.ItemUpdate, auth: dict = Depend
         )
         conn.commit()
 
-        # Fetch the updated item to return
         updated_item_row = conn.execute(
             "SELECT * FROM items WHERE id = ? AND owner = ?",
             (item_id, username)
@@ -231,10 +212,8 @@ def update_item(item_id: str, item_update: model.ItemUpdate, auth: dict = Depend
 
         return {
             "id": updated_item_row["id"],
-            "title": updated_item_row["title"],
-            "folder": updated_item_row["folder"],
             "item_type": updated_item_row["item_type"],
-            "item_data": updated_item_row["encrypted_data"], # Return the encrypted data as is (ciphertext)
+            "item_data": updated_item_row["encrypted_data"],
             "created_at": datetime.datetime.fromisoformat(updated_item_row["created_at"]),
             "updated_at": datetime.datetime.fromisoformat(updated_item_row["updated_at"])
         }
@@ -246,24 +225,17 @@ def get_vault(auth: dict = Depends(authenticate_user)):
 
     with get_db() as conn:
         items = conn.execute(
-            "SELECT * FROM items WHERE owner = ? ORDER BY folder, title",
+            "SELECT * FROM items WHERE owner = ? ORDER BY created_at DESC",
             (username,)
         ).fetchall()
 
-    results = []
-    for item in items:
-        # Server no longer decrypts
-        results.append({
-            "id": item["id"],
-            "title": item["title"],
-            "folder": item["folder"],
-            "item_type": item["item_type"],
-            "item_data": item["encrypted_data"], # Return the encrypted data as is (ciphertext)
-            "created_at": datetime.datetime.fromisoformat(item["created_at"]),
-            "updated_at": datetime.datetime.fromisoformat(item["updated_at"])
-        })
-
-    return results
+    return [{
+        "id": item["id"],
+        "item_type": item["item_type"],
+        "item_data": item["encrypted_data"],
+        "created_at": datetime.datetime.fromisoformat(item["created_at"]),
+        "updated_at": datetime.datetime.fromisoformat(item["updated_at"])
+    } for item in items]
 
 @app.delete("/items/{item_id}", status_code=204)
 def delete_item(item_id: str, auth: dict = Depends(authenticate_user)):
@@ -271,7 +243,7 @@ def delete_item(item_id: str, auth: dict = Depends(authenticate_user)):
 
     with get_db() as conn:
         item_to_delete = conn.execute(
-            "SELECT id, owner, title, folder, item_type, encrypted_data, created_at, updated_at FROM items WHERE id = ? AND owner = ?",
+            "SELECT id, owner, item_type, encrypted_data, created_at, updated_at FROM items WHERE id = ? AND owner = ?",
             (item_id, username)
         ).fetchone()
 
@@ -280,17 +252,15 @@ def delete_item(item_id: str, auth: dict = Depends(authenticate_user)):
 
         conn.execute(
             """
-            INSERT INTO trash (id, owner, title, folder, item_type, encrypted_data, created_at, updated_at, deleted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trash (id, owner, item_type, encrypted_data, created_at, updated_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                item_to_delete["id"], item_to_delete["owner"], item_to_delete["title"],
-                item_to_delete["folder"], item_to_delete["item_type"], item_to_delete["encrypted_data"],
-                item_to_delete["created_at"], item_to_delete["updated_at"],
-                datetime.datetime.now().isoformat()
+                item_to_delete["id"], item_to_delete["owner"], item_to_delete["item_type"],
+                item_to_delete["encrypted_data"], item_to_delete["created_at"],
+                item_to_delete["updated_at"], datetime.datetime.now().isoformat()
             )
         )
-
         conn.execute("DELETE FROM items WHERE id = ? AND owner = ?", (item_id, username))
         conn.commit()
 
@@ -321,7 +291,7 @@ def restore_item_from_trash(item_id: str, auth: dict = Depends(authenticate_user
 
     with get_db() as conn:
         item_to_restore = conn.execute(
-            "SELECT id, owner, title, folder, item_type, encrypted_data, created_at, updated_at FROM trash WHERE id = ? AND owner = ?",
+            "SELECT id, owner, item_type, encrypted_data, created_at, updated_at FROM trash WHERE id = ? AND owner = ?",
             (item_id, username)
         ).fetchone()
 
@@ -329,22 +299,19 @@ def restore_item_from_trash(item_id: str, auth: dict = Depends(authenticate_user
             raise HTTPException(status_code=404, detail="Item not found in trash or not owned by user")
 
         existing_active_item = conn.execute("SELECT id FROM items WHERE id = ?", (item_to_restore["id"],)).fetchone()
-
         if existing_active_item:
-            raise HTTPException(status_code=409, detail=f"An active item with ID '{item_to_restore['id']}' already exists. Cannot restore.")
+            raise HTTPException(status_code=409, detail="An active item with this ID already exists.")
 
         conn.execute(
             """
-            INSERT INTO items (id, owner, title, folder, item_type, encrypted_data, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO items (id, owner, item_type, encrypted_data, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                item_to_restore["id"], item_to_restore["owner"], item_to_restore["title"],
-                item_to_restore["folder"], item_to_restore["item_type"], item_to_restore["encrypted_data"],
-                item_to_restore["created_at"], datetime.datetime.now().isoformat()
+                item_to_restore["id"], item_to_restore["owner"], item_to_restore["item_type"],
+                item_to_restore["encrypted_data"], item_to_restore["created_at"], datetime.datetime.now().isoformat()
             )
         )
-
         conn.execute("DELETE FROM trash WHERE id = ? AND owner = ?", (item_id, username))
         conn.commit()
 
@@ -361,21 +328,14 @@ def get_trash_items(auth: dict = Depends(authenticate_user)):
             (username,)
         ).fetchall()
 
-    results = []
-    for item in items:
-        # Server no longer decrypts
-        results.append({
-            "id": item["id"],
-            "title": item["title"],
-            "folder": item["folder"],
-            "item_type": item["item_type"],
-            "item_data": item["encrypted_data"], # Return the encrypted data as is (ciphertext)
-            "created_at": datetime.datetime.fromisoformat(item["created_at"]),
-            "updated_at": datetime.datetime.fromisoformat(item["updated_at"]),
-            "deleted_at": datetime.datetime.fromisoformat(item["deleted_at"])
-        })
-
-    return results
+    return [{
+        "id": item["id"],
+        "item_type": item["item_type"],
+        "item_data": item["encrypted_data"],
+        "created_at": datetime.datetime.fromisoformat(item["created_at"]),
+        "updated_at": datetime.datetime.fromisoformat(item["updated_at"]),
+        "deleted_at": datetime.datetime.fromisoformat(item["deleted_at"])
+    } for item in items]
 
 
 @app.delete("/trash/permanent_delete/{item_id}", status_code=204)
