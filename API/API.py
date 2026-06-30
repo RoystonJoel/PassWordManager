@@ -265,33 +265,6 @@ def get_vault(auth: dict = Depends(authenticate_user)):
 
     return results
 
-
-@app.get("/search", response_model=list[model.ItemResponse])
-def search_vault(query: str, auth: dict = Depends(authenticate_user)):
-    username = auth["username"]
-
-    with get_db() as conn:
-        items = conn.execute(
-            "SELECT * FROM items WHERE owner = ? AND title LIKE ?",
-            (username, f'%{query}%')
-        ).fetchall()
-
-    results = []
-    for item in items:
-        # Server no longer decrypts
-        results.append({
-            "id": item["id"],
-            "title": item["title"],
-            "folder": item["folder"],
-            "item_type": item["item_type"],
-            "item_data": item["encrypted_data"], # Return the encrypted data as is (ciphertext)
-            "created_at": datetime.datetime.fromisoformat(item["created_at"]),
-            "updated_at": datetime.datetime.fromisoformat(item["updated_at"])
-        })
-
-    return results
-
-
 @app.delete("/items/{item_id}", status_code=204)
 def delete_item(item_id: str, auth: dict = Depends(authenticate_user)):
     username = auth["username"]

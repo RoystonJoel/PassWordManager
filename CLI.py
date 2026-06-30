@@ -9,7 +9,8 @@ import base64
 import json
 from cryptography.fernet import Fernet, InvalidToken
 
-BASE_URL = "http://localhost:8000"
+#BASE_URL = "http://localhost:8000"
+BASE_URL = "http://127.0.0.1:8000"
 AUTH_TOKEN_MESSAGE = b"VAULT_AUTH_SUCCESS"
 
 # --- Client-side Encryption Utilities ---
@@ -514,43 +515,66 @@ def search_vault(auth_tuple: tuple):
     auth_header = (username, password)
 
     print("\n--- Search Vault ---")
-    query = input("Enter title search term: ")
+    query = input("Enter title search term: ").strip().lower()
+
+    if not query:
+        print("[-] Search term cannot be empty.")
+        return
 
     try:
-        # Note: Server-side search is still on title, not encrypted content.
-        # For true zero-knowledge search, client would need to download all items and search locally.
-        # This is a trade-off for performance vs. absolute zero-knowledge on search.
-        response = requests.get(f"{BASE_URL}/search", params={"query": query}, auth=auth_header)
+        # Fetch the entire vault securely (All items are encrypted on the server)
+        response = requests.get(f"{BASE_URL}/items", auth=auth_header)
 
         if response.status_code != 200:
-            print("[-] Failed to search vault.")
+            print("[-] Failed to fetch vault items for searching.")
             return
 
-        results = response.json()
+        all_items = response.json()
 
-        if not results:
-            print("\n[-] No matches found.")
+        if not all_items:
+            print("\n[-] Your vault is empty. Nothing to search.")
+            return
+
+        matches = []
+
+        # Decrypt and filter locally in memory (Zero-Knowledge)
+        for item in all_items:
+            try:
+                # Decrypt the item data payload
+                decrypted_data_str = cipher.decrypt(item["item_data"].encode()).decode()
+                item_data_dict = json.loads(decrypted_data_str)
+                item["item_data"] = item_data_dict  # Replace ciphertext with decrypted dict
+
+                # Check if the query matches the title (case-insensitive)
+                if query in item["title"].lower():
+                    matches.append(item)
+
+            except InvalidToken:
+                print(f"[-] Warning: Could not decrypt item '{item['title']}' (ID: {item['id']}). Skipping.")
+                continue
+
+        if not matches:
+            print(f"\n[-] No matches found for '{query}'.")
         else:
-            print(f"\nFound {len(results)} match(es):")
-            for item in results:
-                try:
-                    # Decrypt item_data
-                    decrypted_data_str = cipher.decrypt(item["item_data"].encode()).decode()
-                    item_data_dict = json.loads(decrypted_data_str)
-                    item["item_data"] = item_data_dict # Replace encrypted string with decrypted dict
+            print(f"\n[+] Found {len(matches)} match(es):")
+            for item in matches:
+                item_type = item.get('item_type', 'unknown')
+                item_data = item.get('item_data', {})
 
-                    item_type = item.get('item_type', 'unknown')
-                    item_data = item.get('item_data', {})
+                print(f"\n========================================")
+                print(f"Title: {item['title']} [{item_type.upper()}]")
+                print(f"Folder: {item['folder']}")
+                print(f"ID: {item['id']}")
+                print(f"----------------------------------------")
 
-                    print(f"\nTitle: {item['title']} [{item_type.upper()}]")
-                    print(f"Folder: {item['folder']}")
-
-                    # Print all nested data dynamically
-                    for key, value in item_data.items():
+                # Print out all nested fields dynamically
+                for key, value in item_data.items():
+                    # Hide sensitive information in search previews if needed
+                    if key in ["password", "cvv", "totp_secret"] and len(value) > 0:
+                        print(f"{key.capitalize()}: ********")
+                    else:
                         print(f"{key.capitalize()}: {value}")
-                except InvalidToken:
-                    print(f"[-] Warning: Could not decrypt search result '{item['title']}' (ID: {item['id']}). Possible master password mismatch or corrupted data.")
-                    continue # Skip this item if decryption fails
+            print(f"========================================")
 
     except requests.exceptions.ConnectionError:
         print(f"\n[-] Error: Could not connect to the API server.")
