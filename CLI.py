@@ -14,9 +14,19 @@ BASE_URL = "http://127.0.0.1:8000"
 AUTH_TOKEN_MESSAGE = b"VAULT_AUTH_SUCCESS"
 
 # --- Client-side Encryption Utilities ---
-def derive_key(password: str, salt: bytes) -> bytes:
-    key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
-    return base64.urlsafe_b64encode(key)
+# --- Client-side Split-Key Encryption Utilities ---
+def derive_keys(password: str, salt: bytes) -> tuple:
+    """
+    Derives Key A (encryption cipher key) and Key B (network authentication string).
+    """
+    # Key A: Heavy stretching using PBKDF2 (stays local to client)
+    key_a_raw = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
+    key_a_fernet = base64.urlsafe_b64encode(key_a_raw)
+
+    # Key B: Fast hash of Key A sent over the network instead of raw master password
+    key_b_auth = hashlib.sha256(key_a_fernet).hexdigest()
+
+    return key_a_fernet, key_b_auth
 
 def check_server():
     """Ensure the API server is reachable before starting."""
@@ -38,16 +48,16 @@ def register_user():
         print("[-] Passwords do not match.")
         return
 
-    # Client-side key derivation and auth_token encryption
     salt = os.urandom(16)
-    key = derive_key(master_pw, salt)
-    f = Fernet(key)
-    auth_token = f.encrypt(AUTH_TOKEN_MESSAGE)
+    key_a, key_b = derive_keys(master_pw, salt)
+
+    # Pre-hash Key B so the server can save it safely without tracking Key B in plaintext
+    server_auth_hash = hashlib.sha256(key_b.encode()).hexdigest()
 
     payload = {
         "username": username,
         "salt": base64.b64encode(salt).decode(),
-        "auth_token": auth_token.decode()
+        "auth_hash": server_auth_hash
     }
 
     try:
@@ -60,60 +70,55 @@ def register_user():
             print(f"\n[-] Registration failed: {error_detail}")
     except requests.exceptions.ConnectionError:
         print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
-        print("    Please ensure the server is running.")
 
 
 def login_user():
-    """
-    Authenticates the user and retrieves their salt to create a client-side cipher.
-    The auth_tuple will now include the cipher instance.
-    """
     print("\n--- User Login ---")
     username = input("Username: ").strip().lower()
+
+    try:
+        # 1. Fetch user salt publicly
+        salt_response = requests.get(f"{BASE_URL}/user/salt/{username}")
+
+        if salt_response.status_code == 404:
+            print("[-] User not found.")
+            return None
+        elif salt_response.status_code != 200:
+            print(f"[-] Server error while fetching salt: {salt_response.status_code}")
+            return None
+
+        user_salt_b64 = salt_response.json()["salt"]
+        user_salt = base64.b64decode(user_salt_b64.encode())
+
+    except requests.exceptions.ConnectionError:
+        print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
+        return None
 
     attempts = 3
     while attempts > 0:
         password = getpass.getpass(f"Master Password ({attempts} attempts left): ")
-        auth_header = (username, password)
+
+        # 2. Derive keys locally
+        key_a, key_b = derive_keys(password, user_salt)
+        cipher = Fernet(key_a)
+
+        # 3. Use Key B as the authentication string over the wire
+        auth_header = (username, key_b)
 
         try:
-            # First, attempt to get the user's salt using basic auth
-            salt_response = requests.get(f"{BASE_URL}/user/salt/{username}", auth=auth_header)
+            test_auth_response = requests.get(f"{BASE_URL}/items", auth=auth_header)
 
-            if salt_response.status_code == 200:
-                user_salt_b64 = salt_response.json()["salt"]
-                user_salt = base64.b64decode(user_salt_b64.encode())
-                key = derive_key(password, user_salt)
-                cipher = Fernet(key)
-
-                # Now, verify the master password by trying to fetch items
-                # This implicitly uses the basic auth header (username, password)
-                # and the server's authenticate_user will verify the auth_token
-                # using the provided password and stored salt.
-                test_auth_response = requests.get(f"{BASE_URL}/items", auth=auth_header)
-
-                if test_auth_response.status_code == 200:
-                    print(f"\n[+] Welcome back, {username}!")
-                    return (username, password, cipher) # auth_tuple now includes the cipher
-                elif test_auth_response.status_code == 401:
-                    print("[-] Incorrect password or user not found.")
-                    attempts -= 1
-                else:
-                    print(f"[-] Server error during authentication: {test_auth_response.status_code}")
-                    return None
-
-            elif salt_response.status_code == 401:
-                print("[-] Incorrect password or user not found.")
-                attempts -= 1
-            elif salt_response.status_code == 404:
-                print("[-] User not found.")
+            if test_auth_response.status_code == 200:
+                print(f"\n[+] Welcome back, {username}!")
+                return (username, key_b, cipher)  # auth_tuple now saves Key B instead of raw password
+            elif test_auth_response.status_code == 401:
+                print("[-] Incorrect password.")
                 attempts -= 1
             else:
-                print(f"[-] Server error while fetching salt: {salt_response.status_code}")
+                print(f"[-] Server error during authentication: {test_auth_response.status_code}")
                 return None
         except requests.exceptions.ConnectionError:
             print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
-            print("    Please ensure the server is running.")
             return None
 
     print("\n[-] Access denied.")

@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
             CREATE TABLE IF NOT EXISTS users (
                 username TEXT PRIMARY KEY,
                 salt TEXT,
-                auth_token TEXT
+                auth_hash TEXT
             )
         ''')
         conn.execute('''
@@ -70,15 +70,10 @@ def derive_key_for_auth(password: str, salt: bytes) -> bytes:
     return base64.urlsafe_b64encode(key)
 
 def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
-    """
-    This runs on every protected API call.
-    It checks the database and verifies the master password.
-    The server no longer returns the cipher.
-    """
     username = credentials.username.strip().lower()
 
     with get_db() as conn:
-        user_row = conn.execute("SELECT salt, auth_token FROM users WHERE username = ?", (username,)).fetchone()
+        user_row = conn.execute("SELECT auth_hash FROM users WHERE username = ?", (username,)).fetchone()
 
     if not user_row:
         raise HTTPException(
@@ -87,18 +82,13 @@ def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
             headers={"WWW-Authenticate": "Basic"},
         )
 
-    salt = base64.b64decode(user_row['salt'].encode())
-    auth_token = user_row['auth_token'].encode()
+    # Compute a fast SHA-256 hash of the incoming Key B string
+    incoming_key_b = credentials.password
+    computed_hash = hashlib.sha256(incoming_key_b.encode()).hexdigest()
 
-    key = derive_key_for_auth(credentials.password, salt)
-    f = Fernet(key)
-
-    try:
-        if f.decrypt(auth_token) == AUTH_TOKEN_MESSAGE:
-            # Authentication successful! Return the username.
-            return {"username": username}
-    except InvalidToken:
-        pass
+    # Instant verification, completely eliminating CPU DoS vulnerabilities
+    if computed_hash == user_row['auth_hash']:
+        return {"username": username}
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -118,23 +108,17 @@ def register_user(user: model.UserCreate):
         if existing_user:
             raise HTTPException(status_code=400, detail="Username already exists")
 
-    # Client now provides salt and encrypted auth_token
-    # The server simply stores them
-    with get_db() as conn:
         conn.execute(
-            "INSERT INTO users (username, salt, auth_token) VALUES (?, ?, ?)",
-            (username, user.salt, user.auth_token) # Expecting salt and auth_token from client
+            "INSERT INTO users (username, salt, auth_hash) VALUES (?, ?, ?)",
+            (username, user.salt, user.auth_hash)
         )
         conn.commit()
 
     return {"message": f"User '{username}' created successfully."}
 
 @app.get("/user/salt/{username}")
-def get_user_salt(username: str, auth: dict = Depends(authenticate_user)):
-    # Ensure the authenticated user is requesting their own salt
-    if auth["username"] != username:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access other users' salt")
-
+def get_user_salt(username: str):
+    # This endpoint is now public so clients can obtain the salt needed to derive keys locally
     with get_db() as conn:
         user_row = conn.execute("SELECT salt FROM users WHERE username = ?", (username,)).fetchone()
         if not user_row:

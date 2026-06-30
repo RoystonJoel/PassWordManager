@@ -35,7 +35,7 @@ class IdentityData(BaseModel):
 class UserCreate(BaseModel):
     username: str
     salt: str # Client will generate and send this
-    auth_token: str # Client will encrypt AUTH_TOKEN_MESSAGE and send this
+    auth_hash: str # Client will encrypt AUTH_TOKEN_MESSAGE and send this
 
 class ItemCreate(BaseModel):
     item_type: str = Field(..., description="E.g., 'login', 'card', 'note', 'identity', 'ssh_key'")
