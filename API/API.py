@@ -10,7 +10,6 @@ from cryptography.fernet import Fernet, InvalidToken
 import pydantic_models as model
 
 DB_FILE = 'database/vault.db'
-AUTH_TOKEN_MESSAGE = b"VAULT_AUTH_SUCCESS"
 
 
 security = HTTPBasic()
@@ -63,11 +62,6 @@ app = FastAPI(title="Multi-User Vault API", lifespan=lifespan)
 
 
 # --- Security Functions ---
-
-# Server-side derive_key and Fernet are now ONLY for auth_token verification
-def derive_key_for_auth(password: str, salt: bytes) -> bytes:
-    key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
-    return base64.urlsafe_b64encode(key)
 
 def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
     username = credentials.username.strip().lower()
