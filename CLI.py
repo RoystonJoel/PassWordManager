@@ -80,10 +80,7 @@ def login_user():
         # 1. Fetch user salt publicly
         salt_response = requests.get(f"{BASE_URL}/user/salt/{username}")
 
-        if salt_response.status_code == 404:
-            print("[-] User not found.")
-            return None
-        elif salt_response.status_code != 200:
+        if salt_response.status_code != 200:
             print(f"[-] Server error while fetching salt: {salt_response.status_code}")
             return None
 
@@ -112,7 +109,7 @@ def login_user():
                 print(f"\n[+] Welcome back, {username}!")
                 return (username, key_b, cipher)  # auth_tuple now saves Key B instead of raw password
             elif test_auth_response.status_code == 401:
-                print("[-] Incorrect password.")
+                print("[-] Username or Password is incorrect.")
                 attempts -= 1
             else:
                 print(f"[-] Server error during authentication: {test_auth_response.status_code}")

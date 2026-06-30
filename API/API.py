@@ -112,12 +112,31 @@ def register_user(user: model.UserCreate):
 
 @app.get("/user/salt/{username}")
 def get_user_salt(username: str):
-    # This endpoint is now public so clients can obtain the salt needed to derive keys locally
+    normalized_username = username.strip().lower()
+
     with get_db() as conn:
-        user_row = conn.execute("SELECT salt FROM users WHERE username = ?", (username,)).fetchone()
-        if not user_row:
-            raise HTTPException(status_code=404, detail="User not found")
-        return {"username": username, "salt": user_row["salt"]}
+        user_row = conn.execute(
+            "SELECT salt FROM users WHERE username = ?",
+            (normalized_username,)
+        ).fetchone()
+
+    if user_row:
+        # Return the genuine salt for valid accounts
+        return {"username": normalized_username, "salt": user_row["salt"]}
+
+    # --- Mitigation for User Enumeration Vulnerability ---
+    # If the user doesn't exist, generate a fake but deterministic 16-byte salt.
+    # We use a secret server-side seed (pepper) so an attacker cannot recreate
+    # the fake salt values locally to identify fake vs real accounts.
+    SECRET_SERVER_PEPPER = b"ZeroKnowledgeSaltStabilizerSecretSeed"
+
+    # Hash the username combined with the secret seed
+    hasher = hashlib.sha256(SECRET_SERVER_PEPPER + normalized_username.encode())
+    fake_salt_bytes = hasher.digest()[:16]  # Take first 16 bytes to match standard salt size
+    fake_salt_b64 = base64.b64encode(fake_salt_bytes).decode()
+
+    # Return the fake salt with a standard 200 OK status code
+    return {"username": normalized_username, "salt": fake_salt_b64}
 
 
 @app.post("/items", response_model=model.ItemResponse, status_code=201)
