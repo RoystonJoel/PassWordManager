@@ -522,15 +522,16 @@ def generate_totp_code(auth_tuple: tuple):
 
     # Extract totp_secret from the nested item_data dictionary (already decrypted)
     item_data = found_item.get('item_data', {})
+    title = item_data.get('title', 'Untitled')
     totp_secret = item_data.get('totp_secret')
 
     if not totp_secret:
-        print(f"[-] Item '{found_item['title']}' does not have a TOTP secret configured.")
+        print(f"[-] Item '{title}' does not have a TOTP secret configured.")
         return
 
     try:
         totp = pyotp.TOTP(totp_secret)
-        print(f"\n[+] Current TOTP code for '{found_item['title']}': {totp.now()}")
+        print(f"\n[+] Current TOTP code for '{title}': {totp.now()}")
         print("    (Code is valid for 30 seconds)")
     except Exception as e:
         print(f"[-] Error generating TOTP code: {e}")
