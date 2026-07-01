@@ -7,9 +7,29 @@ import hashlib
 import base64
 import uuid
 from cryptography.fernet import Fernet, InvalidToken
+from pathlib import Path
 import pydantic_models as model
+import os
+
 
 DB_FILE = 'database/vault.db'
+
+def get_secret(env_key, secret_name):
+    # 1. Check if it is already an environment variable
+    if env_key in os.environ:
+        return os.environ[env_key]
+
+    # 2. Fallback to reading the Docker secret file
+    secret_file = Path(f"/run/secrets/{secret_name}")
+    if secret_file.exists():
+        return secret_file.read_text().strip()
+
+    return None
+
+DB_FILE = get_secret("DB_FILE_PATH", "DB_FILE")
+JWT_SECRET_KEY = get_secret("JWT_SECRET_KEY", "JWT_SECRET")
+JWT_ALGORITHM = get_secret("JWT_ALGORITHM", "JWT_ALGORITHM")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(get_secret("ACCESS_TOKEN_EXPIRE_MINUTES", "TOKEN_EXPIRE"))
 
 
 security = HTTPBasic()

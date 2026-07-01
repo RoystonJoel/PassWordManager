@@ -28,6 +28,10 @@ RUN mkdir -p database && chmod -R 777 database
 
 EXPOSE 8000
 
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
 # Define the command to run your application.
 # This assumes your API.py file starts a web server.
 # For Flask, it might be 'flask run --host=0.0.0.0 --port=5000' or using gunicorn.

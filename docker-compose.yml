@@ -4,6 +4,13 @@ services:
   api:
     build: api
     container_name: api
+    secrets:
+      - DB_FILE
+      - JWT_SECRET
+      - JWT_ALGORITHM
+      - TOKEN_EXPIRE
+    env_file:
+      - ./API/secrets.env
     ports:
       - "8000:8000"
     expose:
@@ -14,6 +21,16 @@ services:
         ipv4_address: 172.2.2.4
     volumes:
       - vault_data:/app/database
+
+secrets:
+  DB_FILE:
+    file: ./API/secrets/db_file_path.txt
+  JWT_SECRET:
+    file: ./API/secrets/jwt_secret_key.txt
+  JWT_ALGORITHM:
+    file: ./API/secrets/jwt_algorithm.txt
+  TOKEN_EXPIRE:
+    file: ./API/secrets/token_expire.txt
 
 networks:
   projectNetwork:
