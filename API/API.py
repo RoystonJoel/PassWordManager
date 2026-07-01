@@ -30,6 +30,7 @@ DB_FILE = get_secret("DB_FILE_PATH", "DB_FILE")
 JWT_SECRET_KEY = get_secret("JWT_SECRET_KEY", "JWT_SECRET")
 JWT_ALGORITHM = get_secret("JWT_ALGORITHM", "JWT_ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(get_secret("ACCESS_TOKEN_EXPIRE_MINUTES", "TOKEN_EXPIRE"))
+SECRET_SERVER_PEPPER = get_secret("SECRET_SERVER_PEPPER", "SECRET_SERVER_PEPPER") or "FallbackDefaultSecretSeedOnlyForLocalDev"
 
 # Tells FastAPI to look for a "Bearer <token>" in the Authorization header
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -165,7 +166,7 @@ def get_user_salt(username: str):
     # If the user doesn't exist, generate a fake but deterministic 16-byte salt.
     # We use a secret server-side seed (pepper) so an attacker cannot recreate
     # the fake salt values locally to identify fake vs real accounts.
-    SECRET_SERVER_PEPPER = b"ZeroKnowledgeSaltStabilizerSecretSeed"
+
 
     # Hash the username combined with the secret seed
     hasher = hashlib.sha256(SECRET_SERVER_PEPPER + normalized_username.encode())

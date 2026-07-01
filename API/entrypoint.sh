@@ -17,5 +17,9 @@ if [ -f /run/secrets/TOKEN_EXPIRE ]; then
     export ACCESS_TOKEN_EXPIRE_MINUTES=$(cat /run/secrets/TOKEN_EXPIRE)
 fi
 
+if [ -f /run/secrets/SECRET_SERVER_PEPPER ]; then
+    export SECRET_SERVER_PEPPER=$(cat /run/secrets/SECRET_SERVER_PEPPER)
+fi
+
 # Execute the container's main command
 exec "$@"

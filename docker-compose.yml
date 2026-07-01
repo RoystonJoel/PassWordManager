@@ -9,6 +9,7 @@ services:
       - JWT_SECRET
       - JWT_ALGORITHM
       - TOKEN_EXPIRE
+      - SECRET_SERVER_PEPPER
     env_file:
       - ./API/secrets.env
     ports:
@@ -31,6 +32,8 @@ secrets:
     file: ./API/secrets/jwt_algorithm.txt
   TOKEN_EXPIRE:
     file: ./API/secrets/token_expire.txt
+  SECRET_SERVER_PEPPER:
+    file: ./API/secrets/secret_server_pepper.txt
 
 networks:
   projectNetwork:
