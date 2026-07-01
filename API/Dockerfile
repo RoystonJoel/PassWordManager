@@ -21,7 +21,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the Python application file into the container at /app
 # This should include API.py and any other necessary Python files
-COPY . .
+COPY API.py .
+COPY pydantic_models.py .
+COPY database .
 
 # Create the database directory and set permissions
 RUN mkdir -p database && chmod -R 777 database
