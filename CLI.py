@@ -11,7 +11,6 @@ from cryptography.fernet import Fernet, InvalidToken
 
 BASE_URL = "http://localhost:8000"
 #BASE_URL = "http://127.0.0.1:8000"
-AUTH_TOKEN_MESSAGE = b"VAULT_AUTH_SUCCESS"
 
 # --- Client-side Encryption Utilities ---
 # --- Client-side Split-Key Encryption Utilities ---
