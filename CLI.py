@@ -9,8 +9,8 @@ import base64
 import json
 from cryptography.fernet import Fernet, InvalidToken
 
-#BASE_URL = "http://localhost:8000"
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = "http://localhost:8000"
+#BASE_URL = "http://127.0.0.1:8000"
 AUTH_TOKEN_MESSAGE = b"VAULT_AUTH_SUCCESS"
 
 # --- Client-side Encryption Utilities ---
@@ -81,14 +81,12 @@ def login_user():
         salt_response = requests.get(f"{BASE_URL}/user/salt/{username}")
 
         if salt_response.status_code != 200:
-            print(f"[-] Server error while fetching salt: {salt_response.status_code}")
+            print("[-] Error connecting to authentication server.")
             return None
 
-        user_salt_b64 = salt_response.json()["salt"]
-        user_salt = base64.b64decode(user_salt_b64.encode())
-
+        user_salt = base64.b64decode(salt_response.json()["salt"].encode())
     except requests.exceptions.ConnectionError:
-        print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
+        print(f"\n[-] Error: Could not connect to the server.")
         return None
 
     attempts = 3
@@ -103,19 +101,24 @@ def login_user():
         auth_header = (username, key_b)
 
         try:
-            test_auth_response = requests.get(f"{BASE_URL}/items", auth=auth_header)
+            # Authenticate using Key B via Basic Auth to the /login endpoint
+            response = requests.post(f"{BASE_URL}/login", auth=(username, key_b))
 
-            if test_auth_response.status_code == 200:
+            if response.status_code == 200:
                 print(f"\n[+] Welcome back, {username}!")
-                return (username, key_b, cipher)  # auth_tuple now saves Key B instead of raw password
-            elif test_auth_response.status_code == 401:
-                print("[-] Username or Password is incorrect.")
+                token = response.json()["access_token"]
+
+                # The auth_tuple now saves the temporary JWT instead of Key B
+                return (username, token, cipher)
+
+            elif response.status_code == 401:
+                print("[-] Incorrect password.")
                 attempts -= 1
             else:
-                print(f"[-] Server error during authentication: {test_auth_response.status_code}")
+                print(f"[-] Server error during login: {response.status_code}")
                 return None
         except requests.exceptions.ConnectionError:
-            print(f"\n[-] Error: Could not connect to the API server at {BASE_URL}.")
+            print(f"\n[-] Error: Could not connect to the server.")
             return None
 
     print("\n[-] Access denied.")
@@ -123,10 +126,10 @@ def login_user():
 
 
 def display_folders(auth_tuple: tuple):
-    username, password, cipher = auth_tuple
-    auth_header = (username, password)
+    username, token, cipher = auth_tuple
+    headers = {"Authorization": f"Bearer {token}"}
     try:
-        response = requests.get(f"{BASE_URL}/items", auth=auth_header)
+        response = requests.get(f"{BASE_URL}/items", headers=headers)
 
         if response.status_code != 200:
             print("[-] Failed to fetch vault.")
@@ -188,8 +191,8 @@ def display_folders(auth_tuple: tuple):
 
 
 def add_item(auth_tuple: tuple):
-    username, password, cipher = auth_tuple
-    auth_header = (username, password)
+    username, token, cipher = auth_tuple
+    headers = {"Authorization": f"Bearer {token}"}
 
     print("\n--- Add New Item ---")
     title = input("Title (e.g., Gmail, Chase Sapphire): ")
@@ -237,7 +240,7 @@ def add_item(auth_tuple: tuple):
     }
 
     try:
-        response = requests.post(f"{BASE_URL}/items", json=payload, auth=auth_header)
+        response = requests.post(f"{BASE_URL}/items", json=payload, headers=headers)
 
         if response.status_code == 201:
             print(f"\n[+] '{title}' added to your vault.")
@@ -248,8 +251,8 @@ def add_item(auth_tuple: tuple):
 
 
 def edit_item(auth_tuple: tuple):
-    username, password, cipher = auth_tuple
-    auth_header = (username, password)
+    username, token, cipher = auth_tuple
+    headers = {"Authorization": f"Bearer {token}"}
 
     print("\n--- Edit Item ---")
     items = display_folders(auth_tuple)  # This returns items with decrypted item_data dicts
@@ -337,7 +340,7 @@ def edit_item(auth_tuple: tuple):
     }
 
     try:
-        response = requests.patch(f"{BASE_URL}/items/{item_id}", json=payload, auth=auth_header)
+        response = requests.patch(f"{BASE_URL}/items/{item_id}", json=payload, headers=headers)
 
         if response.status_code == 200:
             print(f"\n[+] Item updated successfully.")
@@ -348,8 +351,8 @@ def edit_item(auth_tuple: tuple):
 
 
 def delete_item_cli(auth_tuple: tuple):
-    username, password, cipher = auth_tuple
-    auth_header = (username, password)
+    username, token, cipher = auth_tuple
+    headers = {"Authorization": f"Bearer {token}"}
 
     print("\n--- Delete Item ---")
     items = display_folders(auth_tuple) # This returns items with already decrypted item_data dicts
@@ -373,7 +376,7 @@ def delete_item_cli(auth_tuple: tuple):
         return
 
     try:
-        response = requests.delete(f"{BASE_URL}/items/{item_id}", auth=auth_header)
+        response = requests.delete(f"{BASE_URL}/items/{item_id}", headers=headers)
 
         if response.status_code == 204:
             print(f"\n[+] Item '{title}' moved to trash successfully.")
@@ -386,12 +389,12 @@ def delete_item_cli(auth_tuple: tuple):
 
 
 def view_trash_cli(auth_tuple: tuple):
-    username, password, cipher = auth_tuple
-    auth_header = (username, password)
+    username, token, cipher = auth_tuple
+    headers = {"Authorization": f"Bearer {token}"}
 
     print("\n--- View Trash ---")
     try:
-        response = requests.get(f"{BASE_URL}/trash/items", auth=auth_header)
+        response = requests.get(f"{BASE_URL}/trash/items", headers=headers)
 
         if response.status_code != 200:
             print("[-] Failed to fetch trash items.")
@@ -455,7 +458,7 @@ def view_trash_cli(auth_tuple: tuple):
 
                 try:
                     restore_response = requests.post(f"{BASE_URL}/trash/restore/{item_id}", json=restore_payload,
-                                                     auth=auth_header)
+                                                     headers=headers)
                     if restore_response.status_code == 200:
                         print(f"[+] Item '{title}' restored successfully.")
                         return
@@ -483,7 +486,7 @@ def view_trash_cli(auth_tuple: tuple):
                 if confirm == 'y':
                     try:
                         delete_response = requests.delete(f"{BASE_URL}/trash/permanent_delete/{item_id}",
-                                                          auth=auth_header)
+                                                          headers=headers)
                         if delete_response.status_code == 204:
                             print(f"[+] Item '{title}' permanently deleted.")
                             return
@@ -506,8 +509,6 @@ def view_trash_cli(auth_tuple: tuple):
 
 
 def generate_totp_code(auth_tuple: tuple):
-    username, password, cipher = auth_tuple
-    auth_header = (username, password)
 
     print("\n--- Generate TOTP Code ---")
     items = display_folders(auth_tuple) # This returns decrypted items
@@ -540,8 +541,8 @@ def generate_totp_code(auth_tuple: tuple):
 
 
 def search_vault(auth_tuple: tuple):
-    username, password, cipher = auth_tuple
-    auth_header = (username, password)
+    username, token, cipher = auth_tuple
+    headers = {"Authorization": f"Bearer {token}"}
 
     print("\n--- Search Vault ---")
     query = input("Enter title search term: ").strip().lower()
@@ -552,7 +553,7 @@ def search_vault(auth_tuple: tuple):
 
     try:
         # Fetch all items securely from the vault endpoint
-        response = requests.get(f"{BASE_URL}/items", auth=auth_header)
+        response = requests.get(f"{BASE_URL}/items", headers=headers)
 
         if response.status_code != 200:
             print("[-] Failed to fetch vault items for searching.")

@@ -6,13 +6,13 @@ import sqlite3
 import hashlib
 import base64
 import uuid
-from cryptography.fernet import Fernet, InvalidToken
+import jwt
 from pathlib import Path
+from fastapi.security import OAuth2PasswordBearer
 import pydantic_models as model
 import os
 
 
-DB_FILE = 'database/vault.db'
 
 def get_secret(env_key, secret_name):
     # 1. Check if it is already an environment variable
@@ -31,6 +31,8 @@ JWT_SECRET_KEY = get_secret("JWT_SECRET_KEY", "JWT_SECRET")
 JWT_ALGORITHM = get_secret("JWT_ALGORITHM", "JWT_ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(get_secret("ACCESS_TOKEN_EXPIRE_MINUTES", "TOKEN_EXPIRE"))
 
+# Tells FastAPI to look for a "Bearer <token>" in the Authorization header
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 security = HTTPBasic()
 
@@ -83,35 +85,50 @@ app = FastAPI(title="Multi-User Vault API", lifespan=lifespan)
 
 # --- Security Functions ---
 
-def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
+def authenticate_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials or token expired",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        return {"username": username}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
+    except jwt.InvalidTokenError:
+        raise credentials_exception
+
+def create_access_token(username: str) -> str:
+    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode = {"sub": username, "exp": expire}
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return encoded_jwt
+
+
+# --- API Endpoints ---
+
+@app.post("/login")
+def login(credentials: HTTPBasicCredentials = Depends(security)):
     username = credentials.username.strip().lower()
+    incoming_key_b = credentials.password
 
     with get_db() as conn:
         user_row = conn.execute("SELECT auth_hash FROM users WHERE username = ?", (username,)).fetchone()
 
     if not user_row:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    # Compute a fast SHA-256 hash of the incoming Key B string
-    incoming_key_b = credentials.password
     computed_hash = hashlib.sha256(incoming_key_b.encode()).hexdigest()
 
-    # Instant verification, completely eliminating CPU DoS vulnerabilities
     if computed_hash == user_row['auth_hash']:
-        return {"username": username}
+        token = create_access_token(username)
+        return {"access_token": token, "token_type": "bearer"}
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Incorrect password",
-        headers={"WWW-Authenticate": "Basic"},
-    )
-
-
-# --- API Endpoints ---
+    raise HTTPException(status_code=401, detail="Invalid username or password")
 
 @app.post("/register", status_code=201)
 def register_user(user: model.UserCreate):
